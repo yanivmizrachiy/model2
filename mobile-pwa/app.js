@@ -4,6 +4,7 @@ let deferredPrompt = null;
 
 const defaultSettings = { owner: 'yanivmizrachiy', repo: 'model2', branch: 'main' };
 const GAP_MINUTES_FOR_BREAK = 15;
+const VERIFIED_JSON_CANDIDATES = ['./STATE/daily_practice.json', '../STATE/daily_practice.json'];
 const $ = (id) => document.getElementById(id);
 
 const ALLOWED_EVENT_NAMES = new Set([
@@ -83,17 +84,17 @@ function timeOfDayMinutes(dateObj) {
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error('שגיאת רשת: ' + res.status);
   return res.json();
 }
 async function fetchText(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error('שגיאת רשת: ' + res.status);
   return res.text();
 }
 async function fetchArrayBuffer(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error('שגיאת רשת: ' + res.status);
   return res.arrayBuffer();
 }
@@ -187,6 +188,27 @@ function validateDailyRow(row) {
   if (sessions[0].start !== row.start) return false;
   if (sessions[sessions.length - 1].end !== row.end) return false;
   return true;
+}
+
+function normalizeVerifiedRows(payload) {
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  return rows.filter(validateDailyRow).map(row => ({
+    ...row,
+    tasks: Array.isArray(row.tasks) ? row.tasks : [],
+    sources: Array.isArray(row.sources) ? row.sources : [],
+    sessions: Array.isArray(row.sessions) ? row.sessions : []
+  })).sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
+}
+
+async function tryLoadVerifiedDaily() {
+  for (const url of VERIFIED_JSON_CANDIDATES) {
+    try {
+      const payload = await fetchJson(url + `?v=${Date.now()}`);
+      const rows = normalizeVerifiedRows(payload);
+      if (rows.length) return { url, rows, generatedFrom: payload.generated_from || [] };
+    } catch (_) {}
+  }
+  return null;
 }
 
 function aggregateDaily(rawRows) {
@@ -359,6 +381,17 @@ async function loadData() {
   setStatus(`סורק את ${settings.owner}/${settings.repo}@${settings.branch}…`);
 
   try {
+    const verified = await tryLoadVerifiedDaily();
+    if (verified) {
+      state.rawRows = [];
+      state.daily = verified.rows;
+      state.files = verified.generatedFrom;
+      renderAll();
+      setRefresh();
+      setStatus(`נטענו ${verified.rows.length} רשומות יומיות מפלט אמת מאומת`);
+      return;
+    }
+
     const files = await walkRepo(settings.owner, settings.repo, settings.branch);
     state.files = files;
     const dataFiles = files.filter(f => isDataFile(f.path));
