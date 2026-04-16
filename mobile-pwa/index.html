@@ -45,8 +45,15 @@
       </section>
 
       <section id="screen-student" class="screen"><div id="studentView" class="cards"></div></section>
-      <section id="screen-class" class="screen"><div id="classView" class="cards"></div></section>
-</main>
+      <section id="screen-class" class="screen">
+        <div class="filters-card">
+          <div class="filters-grid">
+            <label><span>בחר כיתה</span><select id="classScreenFilter"><option value="">בחר כיתה</option><option value="ח׳">ח׳</option><option value="ט׳">ט׳</option></select></label>
+          </div>
+        </div>
+        <div id="classView" class="cards"></div>
+      </section>
+    </main>
 
     <nav class="bottom-nav">
       <button data-screen="yomi" class="nav-btn active">יומי</button>
