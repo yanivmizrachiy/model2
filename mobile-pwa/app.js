@@ -38,6 +38,17 @@ function activateScreen(name) {
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.nav-btn');
   if (btn) activateScreen(btn.dataset.screen);
+
+  const studentBtn = e.target.closest('[data-open-student]');
+  if (studentBtn) {
+    const student = studentBtn.getAttribute('data-open-student') || '';
+    if (student && $('studentFilter')) {
+      $('studentFilter').value = student;
+      activateScreen('student');
+      renderAll();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
 });
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -305,6 +316,23 @@ function groupBy(arr, fn) {
   }, {});
 }
 
+function summarizeStudentRows(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const sorted = [...safeRows].sort((a, b) => `${b.date}${b.start}`.localeCompare(`${a.date}${a.start}`, 'he'));
+  const totalMinutes = sorted.reduce((sum, r) => sum + (Number(r.totalNet) || 0), 0);
+  const lastDate = sorted[0]?.date || '';
+  const className = sorted[0]?.className || 'לא ידוע';
+  const tasks = [...new Set(sorted.flatMap(r => Array.isArray(r.tasks) ? r.tasks : []).filter(Boolean))];
+  return {
+    rows: sorted,
+    totalMinutes,
+    lastDate,
+    className,
+    totalDays: sorted.length,
+    totalTasks: tasks.length
+  };
+}
+
 function renderSessions(r) {
   if (!r.sessions || !r.sessions.length) return '<span class="muted">לא זוהו סשנים</span>';
   return r.sessions.map(s => `<span class="tag">${minsToText(s.start)}–${minsToText(s.end)}</span>`).join('');
@@ -343,24 +371,42 @@ function renderClassScreen() {
   if (!classView || !sel) return;
   const selected = sel.value || '';
   if (!selected) {
-    classView.innerHTML = '<div class="card">בחר כיתה כדי לראות את כל שמות התלמידים.</div>';
+    classView.innerHTML = '<div class="card">בחר כיתה כדי לראות סיכום מלא של תלמידי אותה כיתה.</div>';
     return;
   }
 
   const rows = state.daily.filter(r => r.className === selected);
-  const students = [...new Set(rows.map(r => r.student).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+  const grouped = groupBy(rows, r => r.student);
+  const students = Object.entries(grouped)
+    .map(([student, studentRows]) => ({ student, summary: summarizeStudentRows(studentRows) }))
+    .sort((a, b) => a.student.localeCompare(b.student, 'he'));
 
   if (!students.length) {
     classView.innerHTML = `<div class="card">לא נמצאו תלמידים לכיתה ${htmlEscape(selected)}.</div>`;
     return;
   }
 
+  const totalMinutes = students.reduce((sum, item) => sum + item.summary.totalMinutes, 0);
   classView.innerHTML = `
     <div class="card">
       <h3>כיתה ${htmlEscape(selected)}</h3>
-      <div class="muted">סה״כ תלמידים: ${students.length}</div>
-      <div class="tag-list" style="margin-top:12px">${students.map(s => `<span class="tag">${htmlEscape(s)}</span>`).join('')}</div>
-    </div>`;
+      <div class="meta">
+        <div><strong>סה״כ תלמידים:</strong> ${students.length}</div>
+        <div><strong>סה״כ דקות נטו:</strong> ${totalMinutes}</div>
+      </div>
+      <div class="muted">לחיצה על "פתח תלמיד" מסננת אוטומטית למסך לפי תלמיד.</div>
+    </div>
+    ${students.map(({ student, summary }) => `
+      <article class="card">
+        <h3>${htmlEscape(student)}</h3>
+        <div class="meta">
+          <div><strong>דקות נטו מצטבר:</strong> ${summary.totalMinutes}</div>
+          <div><strong>מספר ימים:</strong> ${summary.totalDays}</div>
+          <div><strong>תאריך אחרון:</strong> ${htmlEscape(summary.lastDate || 'לא ידוע')}</div>
+          <div><strong>מספר משימות ייחודיות:</strong> ${summary.totalTasks}</div>
+        </div>
+        <button class="secondary" data-open-student="${htmlEscape(student)}">פתח תלמיד</button>
+      </article>`).join('')}`;
 }
 
 function renderAll() {
@@ -370,14 +416,7 @@ function renderAll() {
 
   fillSelect('classFilter', classes, 'כל הכיתות');
   fillSelect('studentFilter', students, 'כל התלמידים');
-
-  const classScreenFilter = $('classScreenFilter');
-  if (classScreenFilter) {
-    const current = classScreenFilter.value;
-    const allowed = classes.filter(v => v === 'ח׳' || v === 'ט׳');
-    classScreenFilter.innerHTML = '<option value="">בחר כיתה</option>' + allowed.map(v => `<option value="${htmlEscape(v)}">${htmlEscape(v)}</option>`).join('');
-    if (allowed.includes(current)) classScreenFilter.value = current;
-  }
+  fillSelect('classScreenFilter', classes, 'בחר כיתה');
 
   const summary = $('summaryBar');
   if (summary) summary.textContent = `נמצאו ${daily.length} רשומות יומיות • ${students.length} תלמידים • ${classes.length} כיתות`;
@@ -388,16 +427,27 @@ function renderAll() {
   const byStudent = groupBy(daily, r => r.student);
   const studentView = $('studentView');
   if (studentView) {
-    studentView.innerHTML = Object.entries(byStudent).map(([student, rows]) => `
-      <div class="card">
-        <h3>${htmlEscape(student)}</h3>
-        <div class="muted">סה״כ ימים: ${rows.length}</div>
-        ${rows.map(r => `
-          <div class="source">
-            <strong>${htmlEscape(r.date || 'ללא תאריך')}</strong> • ${durationText(r.totalNet)}
-            <div class="tag-list" style="margin-top:8px">${renderSessions(r)}</div>
-          </div>`).join('')}
-      </div>`).join('') || '<div class="card">אין נתונים.</div>';
+    const studentCards = Object.entries(byStudent)
+      .sort(([a], [b]) => a.localeCompare(b, 'he'))
+      .map(([student, rows]) => {
+        const summary = summarizeStudentRows(rows);
+        return `
+          <div class="card">
+            <h3>${htmlEscape(student)}</h3>
+            <div class="meta">
+              <div><strong>כיתה:</strong> ${htmlEscape(summary.className)}</div>
+              <div><strong>סה״כ ימים:</strong> ${summary.totalDays}</div>
+              <div><strong>סה״כ דקות נטו:</strong> ${summary.totalMinutes}</div>
+              <div><strong>תאריך אחרון:</strong> ${htmlEscape(summary.lastDate || 'לא ידוע')}</div>
+            </div>
+            ${summary.rows.map(r => `
+              <div class="source">
+                <strong>${htmlEscape(r.date || 'ללא תאריך')}</strong> • ${durationText(r.totalNet)}
+                <div class="tag-list" style="margin-top:8px">${renderSessions(r)}</div>
+              </div>`).join('')}
+          </div>`;
+      });
+    studentView.innerHTML = studentCards.join('') || '<div class="card">אין נתונים.</div>';
   }
 
   renderClassScreen();
@@ -415,14 +465,14 @@ async function loadData() {
       state.files = verified.generatedFrom;
       renderAll();
       setRefresh();
-      setStatus(`נטענו ${verified.rows.length} רשומות יומיות מפלט אמת מאומת`);
+      setStatus(`מקור נתון פעיל: פלט יומי מאומת (${verified.rows.length} רשומות)`);
       return;
     }
 
     const files = await walkRepo(settings.owner, settings.repo, settings.branch);
     state.files = files;
     const dataFiles = files.filter(f => isDataFile(f.path));
-    setStatus(`נמצאו ${dataFiles.length} קבצי נתונים בריפו`);
+    setStatus(`לא נמצא פלט יומי מאומת. מבצע חישוב חי מתוך ${dataFiles.length} קבצי נתונים.`);
 
     let rows = [];
     for (const f of dataFiles) {
@@ -466,7 +516,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const resetBtn = $('resetBtn');
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
-      ['searchInput', 'classFilter', 'studentFilter', 'dateFrom', 'dateTo'].forEach(id => {
+      ['searchInput', 'classFilter', 'studentFilter', 'dateFrom', 'dateTo', 'classScreenFilter'].forEach(id => {
         const el = $(id);
         if (el) el.value = '';
       });
