@@ -78,6 +78,14 @@ function toDateKey(dateObj) {
   return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
 }
 
+function shortDateText(value) {
+  const s = String(value || "").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s || "לא ידוע";
+  const [, yyyy, mm, dd] = m;
+  return `${dd}.${mm}.${yyyy.slice(-2)}`;
+}
+
 function minsToText(mins) {
   if (mins == null || Number.isNaN(mins)) return 'לא ידוע';
   const h = Math.floor(mins / 60), m = mins % 60;
@@ -89,9 +97,7 @@ function durationText(mins) {
   const total = Math.max(Number(mins) || 0, 0);
   const h = Math.floor(total / 60);
   const m = total % 60;
-  if (h === 0) return `${m} דקות`;
-  if (m === 0) return `${h} שעות`;
-  return `${h} שעות ו-${m} דקות`;
+  return `${h}:${String(m).padStart(2, '0')}`;
 }
 
 function timeOfDayMinutes(dateObj) {
@@ -347,13 +353,12 @@ function renderDailyCard(r) {
     <h3>${htmlEscape(r.student)}</h3>
     <div class="meta">
       <div><strong>כיתה:</strong> ${htmlEscape(r.className || 'לא ידוע')}</div>
-      <div><strong>תאריך:</strong> ${htmlEscape(r.date || 'לא ידוע')}</div>
+      <div><strong>תאריך:</strong> ${htmlEscape(shortDateText(r.date))}</div>
       <div><strong>משעה:</strong> ${minsToText(r.start)}</div>
       <div><strong>עד שעה:</strong> ${minsToText(r.end)}</div>
       <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
       <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
     </div>
-    <div class="muted">פער של 15 דקות ומעלה נחשב הפסקה. הסיכום מחושב לפי תלמיד ויממה בלבד.</div>
     <details class="source" open>
       <summary>סשני התרגול באותה יממה</summary>
       <div class="tag-list">${renderSessions(r)}</div>
@@ -396,17 +401,16 @@ function renderClassScreen() {
       <h3>כיתה ${htmlEscape(selected)}</h3>
       <div class="meta">
         <div><strong>סה״כ תלמידים:</strong> ${students.length}</div>
-        <div><strong>סה״כ דקות נטו:</strong> ${totalMinutes}</div>
+        <div><strong>סה״כ דקות נטו:</strong> ${durationText(totalMinutes)}</div>
       </div>
-      <div class="muted">לחיצה על "פתח תלמיד" מסננת אוטומטית למסך לפי תלמיד.</div>
     </div>
     ${students.map(({ student, summary }) => `
       <article class="card">
         <h3>${htmlEscape(student)}</h3>
         <div class="meta">
-          <div><strong>דקות נטו מצטבר:</strong> ${summary.totalMinutes}</div>
+          <div><strong>דקות נטו מצטבר:</strong> ${durationText(summary.totalMinutes)}</div>
           <div><strong>מספר ימים:</strong> ${summary.totalDays}</div>
-          <div><strong>תאריך אחרון:</strong> ${htmlEscape(summary.lastDate || 'לא ידוע')}</div>
+          <div><strong>תאריך אחרון:</strong> ${htmlEscape(shortDateText(summary.lastDate))}</div>
           <div><strong>מספר משימות ייחודיות:</strong> ${summary.totalTasks}</div>
         </div>
         <button class="secondary" data-open-student="${htmlEscape(student)}">פתח תלמיד</button>
@@ -441,12 +445,12 @@ function renderAll() {
             <div class="meta">
               <div><strong>כיתה:</strong> ${htmlEscape(summary.className)}</div>
               <div><strong>סה״כ ימים:</strong> ${summary.totalDays}</div>
-              <div><strong>סה״כ דקות נטו:</strong> ${summary.totalMinutes}</div>
-              <div><strong>תאריך אחרון:</strong> ${htmlEscape(summary.lastDate || 'לא ידוע')}</div>
+              <div><strong>סה״כ דקות נטו:</strong> ${durationText(summary.totalMinutes)}</div>
+              <div><strong>תאריך אחרון:</strong> ${htmlEscape(shortDateText(summary.lastDate))}</div>
             </div>
             ${summary.rows.map(r => `
               <div class="source">
-                <strong>${htmlEscape(r.date || 'ללא תאריך')}</strong> • ${durationText(r.totalNet)}
+                <strong>${htmlEscape(shortDateText(r.date))}</strong> • ${durationText(r.totalNet)}
                 <div class="tag-list" style="margin-top:8px">${renderSessions(r)}</div>
               </div>`).join('')}
           </div>`;
