@@ -113,9 +113,6 @@ async function walkRepo(owner, repo, branch, path = '') {
 function isDataFile(path) {
   return /\.(xlsx|xls|csv)$/i.test(path) && !/node_modules|dist|build|\.git/i.test(path);
 }
-function isRulesFile(path) {
-  return /(^|\/)(RULES\.md|rules\.md|README\.md|AGENTS\.md|RULES_APPEND\.md)$/i.test(path);
-}
 function detectClassFromFilename(filePath) {
   const name = String(filePath || '');
   if (name.includes('ח1')) return 'ח׳';
@@ -223,7 +220,8 @@ function aggregateDaily(rawRows) {
         totalNet: 0,
         tasks: new Set(),
         sources: [],
-        eventCount: 0
+        eventCount: 0,
+        sessions: []
       });
     }
 
@@ -239,12 +237,17 @@ function aggregateDaily(rawRows) {
       day.start = day.start == null ? startMin : Math.min(day.start, startMin);
       day.end = day.end == null ? endMin : Math.max(day.end, endMin);
       day.totalNet += duration;
+      day.sessions.push({ start: startMin, end: endMin, duration, task });
       day.sources.push(`${s.start.sourceFile} • ${s.start.sourceSheet} • ${task}`);
     }
   }
 
   return [...dailyMap.values()]
-    .map(d => ({ ...d, tasks: [...d.tasks] }))
+    .map(d => ({
+      ...d,
+      tasks: [...d.tasks],
+      sessions: d.sessions.sort((a, b) => a.start - b.start)
+    }))
     .sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
 }
 
@@ -284,18 +287,27 @@ function groupBy(arr, fn) {
   }, {});
 }
 
+function renderSessions(r) {
+  if (!r.sessions || !r.sessions.length) return '<span class="muted">לא זוהו סשנים</span>';
+  return r.sessions.map(s => `<span class="tag">${minsToText(s.start)}–${minsToText(s.end)}</span>`).join('');
+}
+
 function renderDailyCard(r) {
   return `<article class="card">
     <h3>${htmlEscape(r.student)}</h3>
     <div class="meta">
       <div><strong>כיתה:</strong> ${htmlEscape(r.className || 'לא ידוע')}</div>
       <div><strong>תאריך:</strong> ${htmlEscape(r.date || 'לא ידוע')}</div>
-      <div><strong>משעה:</strong> ${minsToText(r.start)}</div>
-      <div><strong>עד שעה:</strong> ${minsToText(r.end)}</div>
+      <div><strong>מהשעה הראשונה:</strong> ${minsToText(r.start)}</div>
+      <div><strong>עד השעה האחרונה:</strong> ${minsToText(r.end)}</div>
       <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
       <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
     </div>
     <div class="muted">נספרים רק בוחנים עם אירועי נסיון אמיתיים. פער של 15 דקות ומעלה נחשב הפסקה.</div>
+    <details class="source" open>
+      <summary>כל סשני התרגול באותה יממה</summary>
+      <div class="tag-list">${renderSessions(r)}</div>
+    </details>
     <details class="source">
       <summary>משימות שתרגל ביממה הזאת</summary>
       <div class="tag-list">${r.tasks.length ? r.tasks.map(t => `<span class="tag">${htmlEscape(t)}</span>`).join('') : '<span class="muted">לא זוהתה משימה</span>'}</div>
@@ -324,7 +336,16 @@ function renderAll() {
   const byStudent = groupBy(daily, r => r.student);
   const studentView = $('studentView');
   if (studentView) {
-    studentView.innerHTML = Object.entries(byStudent).map(([student, rows]) => `<div class="card"><h3>${htmlEscape(student)}</h3><div class="muted">סה״כ ימים: ${rows.length}</div>${rows.map(r => `<div class="source"><strong>${htmlEscape(r.date || 'ללא תאריך')}</strong> • ${minsToText(r.start)}–${minsToText(r.end)} • ${durationText(r.totalNet)}</div>`).join('')}</div>`).join('') || '<div class="card">אין נתונים.</div>';
+    studentView.innerHTML = Object.entries(byStudent).map(([student, rows]) => `
+      <div class="card">
+        <h3>${htmlEscape(student)}</h3>
+        <div class="muted">סה״כ ימים: ${rows.length}</div>
+        ${rows.map(r => `
+          <div class="source">
+            <strong>${htmlEscape(r.date || 'ללא תאריך')}</strong> • ${durationText(r.totalNet)}
+            <div class="tag-list" style="margin-top:8px">${renderSessions(r)}</div>
+          </div>`).join('')}
+      </div>`).join('') || '<div class="card">אין נתונים.</div>';
   }
 
   const byClass = groupBy(daily, r => r.className || 'ללא כיתה');
