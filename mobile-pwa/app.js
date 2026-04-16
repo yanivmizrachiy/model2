@@ -151,9 +151,7 @@ function normalizeLogRow(row, sourceFile, sourceSheet, sourceRow) {
     minuteOfDay: timeOfDayMinutes(dt),
     sourceFile,
     sourceSheet,
-    sourceRow,
-    eventName,
-    description
+    sourceRow
   };
 }
 
@@ -175,6 +173,22 @@ function parseCsv(text, filePath) {
   return parseWorkbook(wb, filePath);
 }
 
+function validateDailyRow(row) {
+  if (!row || !Array.isArray(row.sessions) || !row.sessions.length) return false;
+  const sessions = [...row.sessions].sort((a, b) => a.start - b.start);
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    if (s.start == null || s.end == null || s.start > s.end) return false;
+    if (i > 0 && sessions[i - 1].end > s.start) return false;
+    if (s.duration !== Math.max(s.end - s.start, 0)) return false;
+  }
+  const total = sessions.reduce((sum, s) => sum + s.duration, 0);
+  if (total !== row.totalNet) return false;
+  if (sessions[0].start !== row.start) return false;
+  if (sessions[sessions.length - 1].end !== row.end) return false;
+  return true;
+}
+
 function aggregateDaily(rawRows) {
   const byDay = new Map();
 
@@ -192,10 +206,10 @@ function aggregateDaily(rawRows) {
     const student = events[0].student;
     const className = events[0].className;
     const date = events[0].date;
-    const tasks = new Set(events.map(e => e.task).filter(Boolean));
-    const sources = new Set(events.map(e => `${e.sourceFile} • ${e.sourceSheet}`).filter(Boolean));
+    const tasks = [...new Set(events.map(e => e.task).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+    const sources = [...new Set(events.map(e => `${e.sourceFile} • ${e.sourceSheet}`).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
 
-    let sessions = [];
+    const sessions = [];
     let sessionStart = events[0];
     let prev = events[0];
 
@@ -203,36 +217,31 @@ function aggregateDaily(rawRows) {
       const curr = events[i];
       const gapMin = Math.round((curr.timestamp - prev.timestamp) / 60000);
       if (gapMin >= GAP_MINUTES_FOR_BREAK) {
-        sessions.push({ start: sessionStart, end: prev });
+        sessions.push({ start: sessionStart.minuteOfDay, end: prev.minuteOfDay });
         sessionStart = curr;
       }
       prev = curr;
     }
-    sessions.push({ start: sessionStart, end: prev });
+    sessions.push({ start: sessionStart.minuteOfDay, end: prev.minuteOfDay });
 
-    const normalizedSessions = sessions.map(s => {
-      const startMin = s.start.minuteOfDay;
-      const endMin = s.end.minuteOfDay;
-      const duration = Math.max(Math.round((s.end.timestamp - s.start.timestamp) / 60000), 0);
-      return { start: startMin, end: endMin, duration };
-    }).sort((a, b) => a.start - b.start);
+    const normalizedSessions = sessions
+      .map(s => ({ start: s.start, end: s.end, duration: Math.max(s.end - s.start, 0) }))
+      .sort((a, b) => a.start - b.start);
 
-    const totalNet = normalizedSessions.reduce((sum, s) => sum + s.duration, 0);
-    const firstStart = normalizedSessions.length ? normalizedSessions[0].start : null;
-    const lastEnd = normalizedSessions.length ? normalizedSessions[normalizedSessions.length - 1].end : null;
-
-    dailyRows.push({
+    const row = {
       student,
       className,
       date,
-      start: firstStart,
-      end: lastEnd,
-      totalNet,
-      tasks: [...tasks].sort((a, b) => a.localeCompare(b, 'he')),
-      sources: [...sources].sort((a, b) => a.localeCompare(b, 'he')),
+      start: normalizedSessions.length ? normalizedSessions[0].start : null,
+      end: normalizedSessions.length ? normalizedSessions[normalizedSessions.length - 1].end : null,
+      totalNet: normalizedSessions.reduce((sum, s) => sum + s.duration, 0),
+      tasks,
+      sources,
       eventCount: events.length,
       sessions: normalizedSessions
-    });
+    };
+
+    if (validateDailyRow(row)) dailyRows.push(row);
   }
 
   return dailyRows.sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
@@ -290,7 +299,7 @@ function renderDailyCard(r) {
       <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
       <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
     </div>
-    <div class="muted">פער של 15 דקות ומעלה נחשב הפסקה. הסשנים מאוחדים לפי תלמיד ויממה, לא לפי משימה.</div>
+    <div class="muted">פער של 15 דקות ומעלה נחשב הפסקה. הסיכום מחושב לפי תלמיד ויממה בלבד.</div>
     <details class="source" open>
       <summary>סשני התרגול באותה יממה</summary>
       <div class="tag-list">${renderSessions(r)}</div>
