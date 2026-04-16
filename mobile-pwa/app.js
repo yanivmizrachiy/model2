@@ -6,6 +6,17 @@ const defaultSettings = { owner: 'yanivmizrachiy', repo: 'model2', branch: 'main
 const GAP_MINUTES_FOR_BREAK = 15;
 const $ = (id) => document.getElementById(id);
 
+const ALLOWED_EVENT_NAMES = new Set([
+  'צפייה בנסיון מענה',
+  'Quiz attempt updated',
+  'נסיון בוחן נצפה',
+  'נסיון בוחן עודכן',
+  'Quiz attempt viewed',
+  'Quiz attempt started',
+  'Quiz attempt submitted',
+  'נסיון בוחן נשלח'
+]);
+
 function loadSettings() {
   try { return { ...defaultSettings, ...JSON.parse(localStorage.getItem(settingsKey) || '{}') }; }
   catch { return { ...defaultSettings }; }
@@ -109,18 +120,30 @@ function detectClassFromFilename(filePath) {
   const name = String(filePath || '');
   if (name.includes('ח1')) return 'ח׳';
   if (name.includes('ט1')) return 'ט׳';
-  return '';
+  return 'לא ידוע';
 }
 
 function normalizeLogRow(row, sourceFile, sourceSheet, sourceRow) {
   const timeValue = row['זמן'] || row['time'] || '';
   const student = String(row['שם מלא'] || row['משתמש מושפע'] || '').trim();
   const rawTask = String(row['הארוע מתייחס ל:'] || '').trim();
+  const eventName = String(row['שם האירוע'] || '').trim();
+  const description = String(row['תיאור'] || '').trim();
+
   const isQuizTask = /^בוחן:\s*/.test(rawTask);
   const task = rawTask.replace(/^בוחן:\s*/, '').trim();
-
   const dt = parseHebrewDateTime(timeValue);
+
   if (!dt || !student || !task || !isQuizTask) return null;
+
+  const looksLikeRealQuizAction =
+    ALLOWED_EVENT_NAMES.has(eventName) ||
+    /attempt/i.test(eventName) ||
+    /נסיון/i.test(eventName) ||
+    /quiz/i.test(description) ||
+    /attempt/i.test(description);
+
+  if (!looksLikeRealQuizAction) return null;
 
   return {
     student,
@@ -132,9 +155,8 @@ function normalizeLogRow(row, sourceFile, sourceSheet, sourceRow) {
     sourceFile,
     sourceSheet,
     sourceRow,
-    eventName: String(row['שם האירוע'] || '').trim(),
-    component: String(row['רכיב'] || '').trim(),
-    description: String(row['תיאור'] || '').trim(),
+    eventName,
+    description
   };
 }
 
@@ -157,16 +179,17 @@ function parseCsv(text, filePath) {
 }
 
 function aggregateDaily(rawRows) {
-  const buckets = new Map();
+  const byTask = new Map();
+
   for (const row of rawRows) {
     const key = [row.student, row.className, row.date, row.task].join('||');
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(row);
+    if (!byTask.has(key)) byTask.set(key, []);
+    byTask.get(key).push(row);
   }
 
   const dailyMap = new Map();
 
-  for (const events of buckets.values()) {
+  for (const events of byTask.values()) {
     events.sort((a, b) => a.timestamp - b.timestamp);
 
     const student = events[0].student;
@@ -192,18 +215,21 @@ function aggregateDaily(rawRows) {
     const dailyKey = [student, className, date].join('||');
     if (!dailyMap.has(dailyKey)) {
       dailyMap.set(dailyKey, {
-        student, className, date,
-        start: null, end: null,
+        student,
+        className,
+        date,
+        start: null,
+        end: null,
         totalNet: 0,
         tasks: new Set(),
         sources: [],
-        sessionCount: 0
+        eventCount: 0
       });
     }
 
     const day = dailyMap.get(dailyKey);
     day.tasks.add(task);
-    day.sessionCount += sessions.length;
+    day.eventCount += events.length;
 
     for (const s of sessions) {
       const startMin = s.start.minuteOfDay;
@@ -213,7 +239,7 @@ function aggregateDaily(rawRows) {
       day.start = day.start == null ? startMin : Math.min(day.start, startMin);
       day.end = day.end == null ? endMin : Math.max(day.end, endMin);
       day.totalNet += duration;
-      day.sources.push(`${s.start.sourceFile} • ${s.start.sourceSheet} • משימה: ${task}`);
+      day.sources.push(`${s.start.sourceFile} • ${s.start.sourceSheet} • ${task}`);
     }
   }
 
@@ -269,7 +295,7 @@ function renderDailyCard(r) {
       <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
       <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
     </div>
-    <div class="muted">נספרות רק משימות שמתחילות ב־"בוחן:" ופער של 15 דקות ומעלה נחשב הפסקה.</div>
+    <div class="muted">נספרים רק בוחנים עם אירועי נסיון אמיתיים. פער של 15 דקות ומעלה נחשב הפסקה.</div>
     <details class="source">
       <summary>משימות שתרגל ביממה הזאת</summary>
       <div class="tag-list">${r.tasks.length ? r.tasks.map(t => `<span class="tag">${htmlEscape(t)}</span>`).join('') : '<span class="muted">לא זוהתה משימה</span>'}</div>
@@ -311,25 +337,6 @@ function renderAll() {
   }
 }
 
-async function loadRules(files) {
-  const first = files.find(f => isRulesFile(f.path));
-  const rulesMeta = $('rulesMeta');
-  const rulesContent = $('rulesContent');
-  if (!first) {
-    if (rulesMeta) rulesMeta.textContent = 'לא נמצא קובץ כללים מוכר בריפו.';
-    if (rulesContent) rulesContent.textContent = '';
-    return;
-  }
-  try {
-    const text = await fetchText(first.download_url);
-    if (rulesMeta) rulesMeta.textContent = `נטען: ${first.path}`;
-    if (rulesContent) rulesContent.textContent = text;
-  } catch (e) {
-    if (rulesMeta) rulesMeta.textContent = `נמצא ${first.path} אך הקריאה נכשלה.`;
-    if (rulesContent) rulesContent.textContent = String(e.message || e);
-  }
-}
-
 async function loadData() {
   const settings = loadSettings();
   setStatus(`סורק את ${settings.owner}/${settings.repo}@${settings.branch}…`);
@@ -358,13 +365,10 @@ async function loadData() {
 
     state.rawRows = rows;
     state.daily = aggregateDaily(rows);
-    await loadRules(files);
     renderAll();
     setRefresh();
 
-    if (!state.daily.length) {
-      setStatus('לא נמצאו רשומות תרגול אמיתיות לפי כלל בוחנים.');
-    }
+    if (!state.daily.length) setStatus('לא נמצאו נתוני תרגול אמיתיים לפי הסינון המשודרג.');
   } catch (e) {
     setStatus('שגיאה בטעינת הריפו: ' + (e.message || e));
     const dailyList = $('dailyList');
