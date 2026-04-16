@@ -124,13 +124,15 @@ function detectClassFromFilename(filePath) {
 function normalizeLogRow(row, sourceFile, sourceSheet, sourceRow) {
   const timeValue = row['זמן'] || row['time'] || '';
   const student = String(row['שם מלא'] || row['משתמש מושפע'] || '').trim();
-  const task = String(row['הארוע מתייחס ל:'] || '').trim()
+  const rawTask = String(row['הארוע מתייחס ל:'] || '').trim();
+  const isQuizTask = /^בוחן:\s*/.test(rawTask);
+  const task = rawTask
     .replace(/^בוחן:\s*/,'')
     .replace(/^משימה:\s*/,'')
     .trim();
 
   const dt = parseHebrewDateTime(timeValue);
-  if (!dt || !student || !task) return null;
+  if (!dt || !student || !task || !isQuizTask) return null;
 
   return {
     student,
