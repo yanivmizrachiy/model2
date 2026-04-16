@@ -337,6 +337,32 @@ function renderDailyCard(r) {
   </article>`;
 }
 
+function renderClassScreen() {
+  const classView = $('classView');
+  const sel = $('classScreenFilter');
+  if (!classView || !sel) return;
+  const selected = sel.value || '';
+  if (!selected) {
+    classView.innerHTML = '<div class="card">בחר כיתה כדי לראות את כל שמות התלמידים.</div>';
+    return;
+  }
+
+  const rows = state.daily.filter(r => r.className === selected);
+  const students = [...new Set(rows.map(r => r.student).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+
+  if (!students.length) {
+    classView.innerHTML = `<div class="card">לא נמצאו תלמידים לכיתה ${htmlEscape(selected)}.</div>`;
+    return;
+  }
+
+  classView.innerHTML = `
+    <div class="card">
+      <h3>כיתה ${htmlEscape(selected)}</h3>
+      <div class="muted">סה״כ תלמידים: ${students.length}</div>
+      <div class="tag-list" style="margin-top:12px">${students.map(s => `<span class="tag">${htmlEscape(s)}</span>`).join('')}</div>
+    </div>`;
+}
+
 function renderAll() {
   const daily = filteredDaily();
   const classes = [...new Set(state.daily.map(r => r.className).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
@@ -344,6 +370,14 @@ function renderAll() {
 
   fillSelect('classFilter', classes, 'כל הכיתות');
   fillSelect('studentFilter', students, 'כל התלמידים');
+
+  const classScreenFilter = $('classScreenFilter');
+  if (classScreenFilter) {
+    const current = classScreenFilter.value;
+    const allowed = classes.filter(v => v === 'ח׳' || v === 'ט׳');
+    classScreenFilter.innerHTML = '<option value="">בחר כיתה</option>' + allowed.map(v => `<option value="${htmlEscape(v)}">${htmlEscape(v)}</option>`).join('');
+    if (allowed.includes(current)) classScreenFilter.value = current;
+  }
 
   const summary = $('summaryBar');
   if (summary) summary.textContent = `נמצאו ${daily.length} רשומות יומיות • ${students.length} תלמידים • ${classes.length} כיתות`;
@@ -366,14 +400,7 @@ function renderAll() {
       </div>`).join('') || '<div class="card">אין נתונים.</div>';
   }
 
-  const byClass = groupBy(daily, r => r.className || 'ללא כיתה');
-  const classView = $('classView');
-  if (classView) {
-    classView.innerHTML = Object.entries(byClass).map(([className, rows]) => {
-      const total = rows.reduce((s, r) => s + (r.totalNet || 0), 0);
-      return `<div class="card"><h3>${htmlEscape(className)}</h3><div class="muted">ימים: ${rows.length} • זמן נטו מצטבר: ${durationText(total)}</div></div>`;
-    }).join('') || '<div class="card">אין נתונים.</div>';
-  }
+  renderClassScreen();
 }
 
 async function loadData() {
@@ -428,7 +455,7 @@ async function loadData() {
 
 window.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  ['searchInput', 'classFilter', 'studentFilter', 'dateFrom', 'dateTo'].forEach(id => {
+  ['searchInput', 'classFilter', 'studentFilter', 'dateFrom', 'dateTo', 'classScreenFilter'].forEach(id => {
     const el = $(id);
     if (el) { el.addEventListener('input', renderAll); el.addEventListener('change', renderAll); }
   });
@@ -458,5 +485,6 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  renderClassScreen();
   loadData();
 });
