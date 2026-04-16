@@ -86,7 +86,11 @@ function minsToText(mins) {
 
 function durationText(mins) {
   if (mins == null || Number.isNaN(mins)) return 'לא ידוע';
-  const h = Math.floor(mins / 60), m = mins % 60;
+  const total = Math.max(Number(mins) || 0, 0);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m} דקות`;
+  if (m === 0) return `${h} שעות`;
   return `${h} שעות ו-${m} דקות`;
 }
 
