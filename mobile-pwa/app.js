@@ -1,45 +1,20 @@
 
 const settingsKey = 'model2-mobile-settings-v1';
-const state = { rows: [], daily: [], files: [] };
+const state = { rawRows: [], daily: [], files: [] };
 let deferredPrompt = null;
 
 const defaultSettings = { owner: 'yanivmizrachiy', repo: 'model2', branch: 'main' };
-
-const HEADERS = {
-  student: ['שם תלמיד', 'תלמיד', 'שם', 'student', 'name', 'full name'],
-  className: ['כיתה', 'שכבה', 'קבוצה', 'class', 'grade', 'group'],
-  date: ['תאריך', 'יום', 'date', 'practice date'],
-  task: ['משימה', 'שם משימה', 'תרגיל', 'מטלה', 'assignment', 'task', 'activity'],
-  start: ['שעת התחלה', 'התחלה', 'start', 'start time', 'begin', 'from'],
-  end: ['שעת סיום', 'סיום', 'end', 'end time', 'until', 'to'],
-  breakMinutes: ['הפסקה', 'דקות הפסקה', 'break', 'break minutes', 'pause minutes'],
-  breakStart: ['תחילת הפסקה', 'break start', 'pause start'],
-  breakEnd: ['סיום הפסקה', 'break end', 'pause end']
-};
+const GAP_MINUTES_FOR_BREAK = 15;
 
 const $ = (id) => document.getElementById(id);
 
 function loadSettings() {
-  try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem(settingsKey) || '{}') };
-  } catch {
-    return { ...defaultSettings };
-  }
+  try { return { ...defaultSettings, ...JSON.parse(localStorage.getItem(settingsKey) || '{}') }; }
+  catch { return { ...defaultSettings }; }
 }
-
-function saveSettings(s) {
-  localStorage.setItem(settingsKey, JSON.stringify(s));
-}
-
-function setStatus(msg) {
-  const el = $('repoStatus');
-  if (el) el.textContent = msg;
-}
-
-function setRefresh() {
-  const el = $('lastRefresh');
-  if (el) el.textContent = 'עודכן: ' + new Date().toLocaleString('he-IL');
-}
+function saveSettings(s) { localStorage.setItem(settingsKey, JSON.stringify(s)); }
+function setStatus(msg) { const el = $('repoStatus'); if (el) el.textContent = msg; }
+function setRefresh() { const el = $('lastRefresh'); if (el) el.textContent = 'עודכן: ' + new Date().toLocaleString('he-IL'); }
 
 function activateScreen(name) {
   document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
@@ -64,72 +39,41 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 }
 
-function norm(s) {
-  return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+function parseHebrewDateTime(value) {
+  const s = String(value || '').trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const [, dd, mm, yyyy, hh, mi, ss] = m;
+  const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss));
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
 }
 
-function findField(headers, candidates) {
-  const normalized = headers.map(norm);
-  for (const candidate of candidates.map(norm)) {
-    const idx = normalized.findIndex(h => h === candidate || h.includes(candidate) || candidate.includes(h));
-    if (idx >= 0) return headers[idx];
-  }
-  return null;
-}
-
-function toMinutes(value) {
-  if (value == null || value === '') return null;
-  if (typeof value === 'number') {
-    const dayMinutes = Math.round(value * 24 * 60);
-    if (dayMinutes >= 0 && dayMinutes <= 24 * 60) return dayMinutes;
-    return value;
-  }
-  const s = String(value).trim();
-  const m = s.match(/(\d{1,2})[:.](\d{1,2})/);
-  if (m) return Number(m[1]) * 60 + Number(m[2]);
-  if (/^\d+$/.test(s)) return Number(s);
-  return null;
-}
-
-function toDateISO(value) {
-  if (value == null || value === '') return '';
-  if (typeof value === 'number') {
-    const d = XLSX.SSF.parse_date_code(value);
-    if (d && d.y) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
-  }
-  const s = String(value).trim();
-  const m1 = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m1) return `${m1[1]}-${m1[2].padStart(2, '0')}-${m1[3].padStart(2, '0')}`;
-  const m2 = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
-  if (m2) {
-    const y = m2[3].length === 2 ? '20' + m2[3] : m2[3];
-    return `${y}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}`;
-  }
-  const d = new Date(s);
-  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  return s;
+function toDateKey(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function minsToText(mins) {
   if (mins == null || Number.isNaN(mins)) return 'לא ידוע';
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+  const h = Math.floor(mins / 60), m = mins % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 function durationText(mins) {
   if (mins == null || Number.isNaN(mins)) return 'לא ידוע';
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+  const h = Math.floor(mins / 60), m = mins % 60;
   return `${h} שעות ו-${m} דקות`;
+}
+
+function timeOfDayMinutes(dateObj) {
+  return dateObj.getHours() * 60 + dateObj.getMinutes();
 }
 
 async function fetchJson(url) {
@@ -156,11 +100,8 @@ async function walkRepo(owner, repo, branch, path = '') {
   const list = Array.isArray(data) ? data : [];
   let results = [];
   for (const item of list) {
-    if (item.type === 'dir') {
-      results = results.concat(await walkRepo(owner, repo, branch, item.path));
-    } else {
-      results.push(item);
-    }
+    if (item.type === 'dir') results = results.concat(await walkRepo(owner, repo, branch, item.path));
+    else results.push(item);
   }
   return results;
 }
@@ -173,9 +114,38 @@ function isRulesFile(path) {
   return /(^|\/)(RULES\.md|rules\.md|README\.md|AGENTS\.md|RULES_APPEND\.md)$/i.test(path);
 }
 
-function parseCsv(text, filePath) {
-  const wb = XLSX.read(text, { type: 'string' });
-  return parseWorkbook(wb, filePath);
+function detectClassFromFilename(filePath) {
+  const name = String(filePath || '');
+  if (name.includes('ח1')) return 'ח׳';
+  if (name.includes('ט1')) return 'ט׳';
+  return '';
+}
+
+function normalizeLogRow(row, sourceFile, sourceSheet, sourceRow) {
+  const timeValue = row['זמן'] || row['time'] || '';
+  const student = String(row['שם מלא'] || row['משתמש מושפע'] || '').trim();
+  const task = String(row['הארוע מתייחס ל:'] || '').trim()
+    .replace(/^בוחן:\s*/,'')
+    .replace(/^משימה:\s*/,'')
+    .trim();
+
+  const dt = parseHebrewDateTime(timeValue);
+  if (!dt || !student || !task) return null;
+
+  return {
+    student,
+    className: detectClassFromFilename(sourceFile),
+    task,
+    timestamp: dt.getTime(),
+    date: toDateKey(dt),
+    minuteOfDay: timeOfDayMinutes(dt),
+    sourceFile,
+    sourceSheet,
+    sourceRow,
+    eventName: String(row['שם האירוע'] || '').trim(),
+    component: String(row['רכיב'] || '').trim(),
+    description: String(row['תיאור'] || '').trim(),
+  };
 }
 
 function parseWorkbook(wb, filePath) {
@@ -183,85 +153,87 @@ function parseWorkbook(wb, filePath) {
   for (const sheetName of wb.SheetNames) {
     const sheet = wb.Sheets[sheetName];
     const json = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-    json.forEach((row, idx) => rows.push(...normalizeRow(row, filePath, sheetName, idx + 2)));
+    json.forEach((row, idx) => {
+      const normalized = normalizeLogRow(row, filePath, sheetName, idx + 2);
+      if (normalized) rows.push(normalized);
+    });
   }
   return rows;
 }
 
-function normalizeRow(row, sourceFile, sourceSheet, sourceRow) {
-  const headers = Object.keys(row);
-  const studentKey = findField(headers, HEADERS.student);
-  const classKey = findField(headers, HEADERS.className);
-  const dateKey = findField(headers, HEADERS.date);
-  const taskKey = findField(headers, HEADERS.task);
-  const startKey = findField(headers, HEADERS.start);
-  const endKey = findField(headers, HEADERS.end);
-  const breakKey = findField(headers, HEADERS.breakMinutes);
-  const breakStartKey = findField(headers, HEADERS.breakStart);
-  const breakEndKey = findField(headers, HEADERS.breakEnd);
-
-  const student = studentKey ? String(row[studentKey]).trim() : '';
-  if (!student) return [];
-
-  const date = dateKey ? toDateISO(row[dateKey]) : '';
-  const start = startKey ? toMinutes(row[startKey]) : null;
-  const end = endKey ? toMinutes(row[endKey]) : null;
-
-  let breakMinutes = breakKey ? toMinutes(row[breakKey]) : null;
-  if ((breakMinutes == null || Number.isNaN(breakMinutes)) && breakStartKey && breakEndKey) {
-    const bs = toMinutes(row[breakStartKey]);
-    const be = toMinutes(row[breakEndKey]);
-    if (bs != null && be != null && be >= bs) breakMinutes = be - bs;
-  }
-  if (breakMinutes == null || Number.isNaN(breakMinutes)) breakMinutes = 0;
-
-  let gross = null;
-  if (start != null && end != null && end >= start) gross = end - start;
-  const netMinutes = gross != null ? Math.max(gross - breakMinutes, 0) : null;
-
-  return [{
-    student,
-    className: classKey ? String(row[classKey]).trim() : '',
-    date,
-    task: taskKey ? String(row[taskKey]).trim() : '',
-    start,
-    end,
-    breakMinutes,
-    netMinutes,
-    warning: (!date || start == null || end == null) ? 'יש שדות שלא זוהו במדויק' : '',
-    sourceFile,
-    sourceSheet,
-    sourceRow
-  }];
+function parseCsv(text, filePath) {
+  const wb = XLSX.read(text, { type: 'string' });
+  return parseWorkbook(wb, filePath);
 }
 
-function aggregateDaily(rows) {
-  const groups = new Map();
-  for (const row of rows) {
-    const key = [row.student, row.className, row.date].join('||');
-    if (!groups.has(key)) {
-      groups.set(key, {
-        student: row.student,
-        className: row.className,
-        date: row.date,
-        start: row.start,
-        end: row.end,
+function aggregateDaily(rawRows) {
+  const buckets = new Map();
+
+  for (const row of rawRows) {
+    const key = [row.student, row.className, row.date, row.task].join('||');
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(row);
+  }
+
+  const dailyMap = new Map();
+
+  for (const [key, events] of buckets.entries()) {
+    events.sort((a, b) => a.timestamp - b.timestamp);
+
+    let sessions = [];
+    let sessionStart = events[0];
+    let prev = events[0];
+
+    for (let i = 1; i < events.length; i++) {
+      const curr = events[i];
+      const gapMin = Math.round((curr.timestamp - prev.timestamp) / 60000);
+      if (gapMin >= GAP_MINUTES_FOR_BREAK) {
+        sessions.push({ start: sessionStart, end: prev });
+        sessionStart = curr;
+      }
+      prev = curr;
+    }
+    sessions.push({ start: sessionStart, end: prev });
+
+    const student = events[0].student;
+    const className = events[0].className;
+    const date = events[0].date;
+    const task = events[0].task;
+
+    const dailyKey = [student, className, date].join('||');
+    if (!dailyMap.has(dailyKey)) {
+      dailyMap.set(dailyKey, {
+        student,
+        className,
+        date,
+        start: null,
+        end: null,
         totalNet: 0,
         tasks: new Set(),
         warnings: new Set(),
-        sources: []
+        sources: [],
+        sessionCount: 0
       });
     }
-    const g = groups.get(key);
-    if (row.start != null) g.start = g.start == null ? row.start : Math.min(g.start, row.start);
-    if (row.end != null) g.end = g.end == null ? row.end : Math.max(g.end, row.end);
-    if (row.netMinutes != null) g.totalNet += row.netMinutes;
-    if (row.task) g.tasks.add(row.task);
-    if (row.warning) g.warnings.add(row.warning);
-    g.sources.push(`${row.sourceFile} • ${row.sourceSheet} • שורה ${row.sourceRow}`);
+
+    const day = dailyMap.get(dailyKey);
+    day.tasks.add(task);
+    day.sessionCount += sessions.length;
+
+    for (const s of sessions) {
+      const startMin = s.start.minuteOfDay;
+      const endMin = s.end.minuteOfDay;
+      const duration = Math.max(Math.round((s.end.timestamp - s.start.timestamp) / 60000), 0);
+
+      day.start = day.start == null ? startMin : Math.min(day.start, startMin);
+      day.end = day.end == null ? endMin : Math.max(day.end, endMin);
+      day.totalNet += duration;
+      day.sources.push(`${s.start.sourceFile} • ${s.start.sourceSheet} • משימה: ${task}`);
+    }
   }
-  return [...groups.values()]
-    .map(g => ({ ...g, tasks: [...g.tasks], warnings: [...g.warnings] }))
+
+  return [...dailyMap.values()]
+    .map(d => ({ ...d, tasks: [...d.tasks], warnings: [...d.warnings] }))
     .sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
 }
 
@@ -271,6 +243,7 @@ function filteredDaily() {
   const stu = $('studentFilter')?.value || '';
   const from = $('dateFrom')?.value || '';
   const to = $('dateTo')?.value || '';
+
   return state.daily.filter(r => {
     if (cls && r.className !== cls) return false;
     if (stu && r.student !== stu) return false;
@@ -301,13 +274,33 @@ function groupBy(arr, fn) {
 }
 
 function renderDailyCard(r) {
-  return `<article class="card"><h3>${htmlEscape(r.student)}</h3><div class="meta"><div><strong>כיתה:</strong> ${htmlEscape(r.className || 'לא ידוע')}</div><div><strong>תאריך:</strong> ${htmlEscape(r.date || 'לא ידוע')}</div><div><strong>משעה:</strong> ${minsToText(r.start)}</div><div><strong>עד שעה:</strong> ${minsToText(r.end)}</div><div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div><div><strong>כמות משימות:</strong> ${r.tasks.length}</div></div>${r.warnings.length ? `<div class="muted">אזהרה: ${htmlEscape(r.warnings.join(' | '))}</div>` : ''}<details class="source"><summary>משימות שתרגל ביממה הזאת</summary><div class="tag-list">${r.tasks.length ? r.tasks.map(t => `<span class="tag">${htmlEscape(t)}</span>`).join('') : '<span class="muted">לא זוהתה משימה</span>'}</div></details><details class="source"><summary>מקור הנתון</summary><ul>${r.sources.map(s => `<li>${htmlEscape(s)}</li>`).join('')}</ul></details></article>`;
+  return `<article class="card">
+    <h3>${htmlEscape(r.student)}</h3>
+    <div class="meta">
+      <div><strong>כיתה:</strong> ${htmlEscape(r.className || 'לא ידוע')}</div>
+      <div><strong>תאריך:</strong> ${htmlEscape(r.date || 'לא ידוע')}</div>
+      <div><strong>משעה:</strong> ${minsToText(r.start)}</div>
+      <div><strong>עד שעה:</strong> ${minsToText(r.end)}</div>
+      <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
+      <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
+    </div>
+    <div class="muted">פער של 15 דקות ומעלה נחשב הפסקה ולא זמן תרגול.</div>
+    <details class="source">
+      <summary>משימות שתרגל ביממה הזאת</summary>
+      <div class="tag-list">${r.tasks.length ? r.tasks.map(t => `<span class="tag">${htmlEscape(t)}</span>`).join('') : '<span class="muted">לא זוהתה משימה</span>'}</div>
+    </details>
+    <details class="source">
+      <summary>מקור הנתון</summary>
+      <ul>${r.sources.map(s => `<li>${htmlEscape(s)}</li>`).join('')}</ul>
+    </details>
+  </article>`;
 }
 
 function renderAll() {
   const daily = filteredDaily();
   const classes = [...new Set(state.daily.map(r => r.className).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
   const students = [...new Set(state.daily.map(r => r.student).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'));
+
   fillSelect('classFilter', classes, 'כל הכיתות');
   fillSelect('studentFilter', students, 'כל התלמידים');
 
@@ -337,11 +330,13 @@ async function loadRules(files) {
   const first = files.find(f => isRulesFile(f.path));
   const rulesMeta = $('rulesMeta');
   const rulesContent = $('rulesContent');
+
   if (!first) {
     if (rulesMeta) rulesMeta.textContent = 'לא נמצא קובץ כללים מוכר בריפו.';
     if (rulesContent) rulesContent.textContent = '';
     return;
   }
+
   try {
     const text = await fetchText(first.download_url);
     if (rulesMeta) rulesMeta.textContent = `נטען: ${first.path}`;
@@ -354,14 +349,17 @@ async function loadRules(files) {
 
 async function loadData() {
   const settings = loadSettings();
+
   if ($('ownerInput')) $('ownerInput').value = settings.owner;
   if ($('repoInput')) $('repoInput').value = settings.repo;
   if ($('branchInput')) $('branchInput').value = settings.branch;
 
   setStatus(`סורק את ${settings.owner}/${settings.repo}@${settings.branch}…`);
+
   try {
     const files = await walkRepo(settings.owner, settings.repo, settings.branch);
     state.files = files;
+
     const dataFiles = files.filter(f => isDataFile(f.path));
     setStatus(`נמצאו ${dataFiles.length} קבצי נתונים בריפו`);
 
@@ -376,17 +374,20 @@ async function loadData() {
           const wb = XLSX.read(buf, { type: 'array' });
           rows.push(...parseWorkbook(wb, f.path));
         }
-      } catch {}
+      } catch (e) {
+        console.error('data file parse failed', f.path, e);
+      }
     }
 
-    state.rows = rows.filter(r => r.student);
-    state.daily = aggregateDaily(state.rows);
+    state.rawRows = rows;
+    state.daily = aggregateDaily(rows);
+
     await loadRules(files);
     renderAll();
     setRefresh();
 
     if (!state.daily.length) {
-      setStatus('לא זוהו עדיין שורות נתונים תקינות לקיבוץ יומי. ייתכן ששמות העמודות שונים וצריך כיוון נוסף.');
+      setStatus('לא זוהו עדיין רשומות יומיות. כעת נעשה חישוב לפי לוג אירועים עם פער של 15 דקות כהפסקה.');
     }
   } catch (e) {
     setStatus('שגיאה בטעינת הריפו: ' + (e.message || e));
