@@ -176,23 +176,24 @@ function parseCsv(text, filePath) {
 }
 
 function aggregateDaily(rawRows) {
-  const byTask = new Map();
+  const byDay = new Map();
 
   for (const row of rawRows) {
-    const key = [row.student, row.className, row.date, row.task].join('||');
-    if (!byTask.has(key)) byTask.set(key, []);
-    byTask.get(key).push(row);
+    const key = [row.student, row.className, row.date].join('||');
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(row);
   }
 
-  const dailyMap = new Map();
+  const dailyRows = [];
 
-  for (const events of byTask.values()) {
+  for (const events of byDay.values()) {
     events.sort((a, b) => a.timestamp - b.timestamp);
 
     const student = events[0].student;
     const className = events[0].className;
     const date = events[0].date;
-    const task = events[0].task;
+    const tasks = new Set(events.map(e => e.task).filter(Boolean));
+    const sources = new Set(events.map(e => `${e.sourceFile} • ${e.sourceSheet}`).filter(Boolean));
 
     let sessions = [];
     let sessionStart = events[0];
@@ -209,46 +210,32 @@ function aggregateDaily(rawRows) {
     }
     sessions.push({ start: sessionStart, end: prev });
 
-    const dailyKey = [student, className, date].join('||');
-    if (!dailyMap.has(dailyKey)) {
-      dailyMap.set(dailyKey, {
-        student,
-        className,
-        date,
-        start: null,
-        end: null,
-        totalNet: 0,
-        tasks: new Set(),
-        sources: [],
-        eventCount: 0,
-        sessions: []
-      });
-    }
-
-    const day = dailyMap.get(dailyKey);
-    day.tasks.add(task);
-    day.eventCount += events.length;
-
-    for (const s of sessions) {
+    const normalizedSessions = sessions.map(s => {
       const startMin = s.start.minuteOfDay;
       const endMin = s.end.minuteOfDay;
       const duration = Math.max(Math.round((s.end.timestamp - s.start.timestamp) / 60000), 0);
+      return { start: startMin, end: endMin, duration };
+    }).sort((a, b) => a.start - b.start);
 
-      day.start = day.start == null ? startMin : Math.min(day.start, startMin);
-      day.end = day.end == null ? endMin : Math.max(day.end, endMin);
-      day.totalNet += duration;
-      day.sessions.push({ start: startMin, end: endMin, duration, task });
-      day.sources.push(`${s.start.sourceFile} • ${s.start.sourceSheet} • ${task}`);
-    }
+    const totalNet = normalizedSessions.reduce((sum, s) => sum + s.duration, 0);
+    const firstStart = normalizedSessions.length ? normalizedSessions[0].start : null;
+    const lastEnd = normalizedSessions.length ? normalizedSessions[normalizedSessions.length - 1].end : null;
+
+    dailyRows.push({
+      student,
+      className,
+      date,
+      start: firstStart,
+      end: lastEnd,
+      totalNet,
+      tasks: [...tasks].sort((a, b) => a.localeCompare(b, 'he')),
+      sources: [...sources].sort((a, b) => a.localeCompare(b, 'he')),
+      eventCount: events.length,
+      sessions: normalizedSessions
+    });
   }
 
-  return [...dailyMap.values()]
-    .map(d => ({
-      ...d,
-      tasks: [...d.tasks],
-      sessions: d.sessions.sort((a, b) => a.start - b.start)
-    }))
-    .sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
+  return dailyRows.sort((a, b) => `${b.date}${b.student}`.localeCompare(`${a.date}${a.student}`, 'he'));
 }
 
 function filteredDaily() {
@@ -298,18 +285,18 @@ function renderDailyCard(r) {
     <div class="meta">
       <div><strong>כיתה:</strong> ${htmlEscape(r.className || 'לא ידוע')}</div>
       <div><strong>תאריך:</strong> ${htmlEscape(r.date || 'לא ידוע')}</div>
-      <div><strong>מהשעה הראשונה:</strong> ${minsToText(r.start)}</div>
-      <div><strong>עד השעה האחרונה:</strong> ${minsToText(r.end)}</div>
+      <div><strong>משעה:</strong> ${minsToText(r.start)}</div>
+      <div><strong>עד שעה:</strong> ${minsToText(r.end)}</div>
       <div><strong>זמן נטו:</strong> ${durationText(r.totalNet)}</div>
       <div><strong>כמות משימות:</strong> ${r.tasks.length}</div>
     </div>
-    <div class="muted">נספרים רק בוחנים עם אירועי נסיון אמיתיים. פער של 15 דקות ומעלה נחשב הפסקה.</div>
+    <div class="muted">פער של 15 דקות ומעלה נחשב הפסקה. הסשנים מאוחדים לפי תלמיד ויממה, לא לפי משימה.</div>
     <details class="source" open>
-      <summary>כל סשני התרגול באותה יממה</summary>
+      <summary>סשני התרגול באותה יממה</summary>
       <div class="tag-list">${renderSessions(r)}</div>
     </details>
     <details class="source">
-      <summary>משימות שתרגל ביממה הזאת</summary>
+      <summary>משימות שבוצעו באותה יממה</summary>
       <div class="tag-list">${r.tasks.length ? r.tasks.map(t => `<span class="tag">${htmlEscape(t)}</span>`).join('') : '<span class="muted">לא זוהתה משימה</span>'}</div>
     </details>
     <details class="source">
