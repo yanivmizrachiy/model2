@@ -1,4 +1,4 @@
-const CACHE='model2-mobile-pwa-v1';
+const CACHE='model2-mobile-pwa-v1776346491';
 const ASSETS=['./','./index.html','./styles.css','./app.js','./manifest.webmanifest','./icon.svg'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS))));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
